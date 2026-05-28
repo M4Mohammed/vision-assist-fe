@@ -39,3 +39,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local agent / editor config
+.mcp.json
+CLAUDE.md
+AGENTS.md
+
+# pdfs (database dumps, design exports, etc.)
+*.pdf
+
+# stray figma exports left in the repo root
+sign-in-user.svg
+sign-up-user.svg
+pages-bigger-font.svg
