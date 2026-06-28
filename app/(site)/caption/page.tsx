@@ -21,7 +21,10 @@ import { Button } from "@/components/ui/Button";
 import { useCameraStream } from "@/lib/caption/useCameraStream";
 import { useFrameCapture } from "@/lib/caption/useFrameCapture";
 import { useTextToSpeech } from "@/lib/caption/useTextToSpeech";
-import { MockCaptionSocket } from "@/lib/caption/MockCaptionSocket";
+import {
+  CaptionSocket,
+  type CaptionClassification,
+} from "@/lib/caption/CaptionSocket";
 import {
   sampleImageCaption,
   sampleRecordedCaption,
@@ -32,10 +35,10 @@ type CaptionTab = "image" | "recorded" | "live";
 
 interface CaptionState {
   text: string | null;
-  confidence: number | null;
+  classification: CaptionClassification | null;
 }
 
-const EMPTY: CaptionState = { text: null, confidence: null };
+const EMPTY: CaptionState = { text: null, classification: null };
 
 export default function CaptionPage() {
   return (
@@ -56,7 +59,7 @@ function CaptionExperience() {
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [denyDialogOpen, setDenyDialogOpen] = useState(false);
 
-  const socketRef = useRef<MockCaptionSocket | null>(null);
+  const socketRef = useRef<CaptionSocket | null>(null);
   const { videoRef, status, errorMessage, start, stop } = useCameraStream();
   const tts = useTextToSpeech();
   const { toast } = useToast();
@@ -101,31 +104,37 @@ function CaptionExperience() {
       socketRef.current = null;
       return;
     }
-    const socket = new MockCaptionSocket();
+    const socket = new CaptionSocket();
     socketRef.current = socket;
     const unsubscribe = socket.on((event) => {
       if (event.type === "caption") {
         setLiveCaption({
           text: event.caption.text,
-          confidence: event.caption.confidence,
+          classification: event.caption.classification,
         });
         speakIfEnabled(event.caption.text);
+      } else if (event.type === "error") {
+        toast({
+          title: "Live captioning error",
+          description: event.message,
+          tone: "error",
+        });
       }
     });
-    void socket.connect();
+    socket.connect();
     return () => {
       unsubscribe();
       socket.close();
       socketRef.current = null;
     };
-  }, [activeTab, status, speakIfEnabled]);
+  }, [activeTab, status, speakIfEnabled, toast]);
 
   useFrameCapture({
     videoRef,
     intervalMs: 1000,
     enabled: liveBusy,
-    onFrame: () => {
-      socketRef.current?.sendFrame();
+    onFrame: (frame) => {
+      socketRef.current?.sendFrame(frame);
     },
   });
 
@@ -144,7 +153,7 @@ function CaptionExperience() {
     setTimeout(() => {
       setImageCaption({
         text: sampleImageCaption.text,
-        confidence: sampleImageCaption.confidence,
+        classification: null,
       });
       setImageBusy(false);
       speakIfEnabled(sampleImageCaption.text);
@@ -157,7 +166,7 @@ function CaptionExperience() {
     setTimeout(() => {
       setRecordedCaption({
         text: sampleRecordedCaption.text,
-        confidence: sampleRecordedCaption.confidence,
+        classification: null,
       });
       setRecordedBusy(false);
       speakIfEnabled(sampleRecordedCaption.text);
@@ -247,7 +256,7 @@ function CaptionExperience() {
 
           <GeneratedCaptionPanel
             caption={activeCaption.text}
-            confidence={activeCaption.confidence}
+            classification={activeCaption.classification}
             speakSupported={tts.supported}
             autoSpeak={autoSpeak}
             onToggleAutoSpeak={onToggleAutoSpeak}

@@ -9,13 +9,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import * as authApi from "@/lib/api/auth";
+import * as tokenStore from "@/lib/auth/tokenStore";
+import type { AuthUser, StoredSession } from "@/lib/auth/tokenStore";
+import type { AuthResponse } from "@/lib/api/types";
 
-export interface AuthUser {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-}
+export type { AuthUser };
 
 export interface SignUpInput {
   firstName: string;
@@ -35,82 +34,81 @@ interface AuthContextValue {
   isLoading: boolean;
   signUp: (input: SignUpInput) => Promise<AuthUser>;
   signIn: (input: SignInInput) => Promise<AuthUser>;
-  signOut: () => void;
+  signOut: () => Promise<void>;
 }
-
-const STORAGE_KEY = "capit:auth";
-const STUB_DELAY_MS = 400;
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function toSession(response: AuthResponse): StoredSession {
+  return {
+    accessToken: response.accessToken,
+    refreshToken: response.refreshToken,
+    expiresAt: Date.now() + response.expiresIn * 1000,
+    user: response.user,
+  };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Hydrate from localStorage on first mount (browser-only), then validate the session
+  // against the backend in the background. SSR renders with user=null; the client catches up.
   useEffect(() => {
-    let hydratedUser: AuthUser | null = null;
-    try {
-      const raw = sessionStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        hydratedUser = JSON.parse(raw) as AuthUser;
-      }
-    } catch {
-      sessionStorage.removeItem(STORAGE_KEY);
-    }
-    // Hydrate from sessionStorage on first mount. The cascading render is
-    // intentional: SSR has to render with user=null and the client then catches
-    // up. This is the documented React hydration pattern for browser-only state.
+    const session = tokenStore.read();
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setUser(hydratedUser);
+    setUser(session?.user ?? null);
     setIsLoading(false);
+
+    if (!session) return;
+
+    authApi
+      .me()
+      .then((freshUser) => {
+        // Persist any server-side changes to the user; keep the existing tokens.
+        const current = tokenStore.read();
+        if (current) {
+          tokenStore.write({ ...current, user: freshUser });
+        }
+        setUser(freshUser);
+      })
+      .catch(() => {
+        // me() already attempted a refresh; if it still failed the store is cleared.
+        setUser(null);
+      });
   }, []);
 
-  const persist = useCallback((next: AuthUser | null) => {
-    setUser(next);
-    if (next) {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } else {
-      sessionStorage.removeItem(STORAGE_KEY);
+  // Reflect token-store changes (refresh failure → sign-out, and cross-tab sign-in/out).
+  useEffect(() => {
+    return tokenStore.subscribe((session) => setUser(session?.user ?? null));
+  }, []);
+
+  const signUp = useCallback<AuthContextValue["signUp"]>(async (input) => {
+    const response = await authApi.register(input);
+    tokenStore.write(toSession(response));
+    setUser(response.user);
+    return response.user;
+  }, []);
+
+  const signIn = useCallback<AuthContextValue["signIn"]>(async (input) => {
+    const response = await authApi.login(input);
+    tokenStore.write(toSession(response));
+    setUser(response.user);
+    return response.user;
+  }, []);
+
+  const signOut = useCallback<AuthContextValue["signOut"]>(async () => {
+    const refreshToken = tokenStore.getRefreshToken();
+    tokenStore.clear();
+    setUser(null);
+    if (refreshToken) {
+      try {
+        await authApi.logout(refreshToken);
+      } catch {
+        // Best-effort: the client is already signed out locally.
+      }
     }
   }, []);
-
-  const signUp = useCallback<AuthContextValue["signUp"]>(
-    async (input) => {
-      await sleep(STUB_DELAY_MS);
-      const next: AuthUser = {
-        id: `user_${Date.now()}`,
-        email: input.email,
-        firstName: input.firstName,
-        lastName: input.lastName,
-      };
-      persist(next);
-      return next;
-    },
-    [persist],
-  );
-
-  const signIn = useCallback<AuthContextValue["signIn"]>(
-    async (input) => {
-      await sleep(STUB_DELAY_MS);
-      const next: AuthUser = {
-        id: `user_${Date.now()}`,
-        email: input.email,
-        firstName: "Jane",
-        lastName: "Doe",
-      };
-      persist(next);
-      return next;
-    },
-    [persist],
-  );
-
-  const signOut = useCallback(() => {
-    persist(null);
-  }, [persist]);
 
   const value = useMemo<AuthContextValue>(
     () => ({ user, isLoading, signUp, signIn, signOut }),

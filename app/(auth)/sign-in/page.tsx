@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/Dialog";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { useToast } from "@/components/ui/Toast";
+import { isApiClientError } from "@/lib/api/ApiClientError";
 
 const signInSchema = z.object({
   email: z.string().trim().toLowerCase().email("Enter a valid email"),
@@ -50,10 +51,14 @@ export default function SignInPage() {
         tone: "success",
       });
       router.replace("/caption");
-    } catch {
+    } catch (error) {
+      const description =
+        isApiClientError(error) && error.status === 401
+          ? "Invalid email or password."
+          : "Check your details and try again.";
       toast({
         title: "Could not sign in",
-        description: "Check your details and try again.",
+        description,
         tone: "error",
       });
     }

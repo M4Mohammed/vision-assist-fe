@@ -12,6 +12,7 @@ import { TextField } from "@/components/ui/TextField";
 import { PasswordField } from "@/components/ui/PasswordField";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { useToast } from "@/components/ui/Toast";
+import { isApiClientError } from "@/lib/api/ApiClientError";
 
 const signUpSchema = z
   .object({
@@ -41,6 +42,7 @@ export default function SignUpPage() {
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<SignUpFormValues>({
     resolver: zodResolver(signUpSchema),
@@ -56,14 +58,46 @@ export default function SignUpPage() {
 
   const onSubmit = async (values: SignUpFormValues) => {
     try {
-      await signUp(values);
+      await signUp({
+        firstName: values.firstName,
+        lastName: values.lastName,
+        phone: values.phone,
+        email: values.email,
+        password: values.password,
+      });
       toast({
         title: "Account initialized",
         description: "Welcome to CapIt.",
         tone: "success",
       });
       router.replace("/caption");
-    } catch {
+    } catch (error) {
+      if (isApiClientError(error)) {
+        // Duplicate email.
+        if (error.status === 409) {
+          setError("email", { message: "An account with this email already exists" });
+          return;
+        }
+        // Server-side validation errors, mapped back onto the matching fields.
+        if (error.status === 400 && error.fieldErrors) {
+          const fields: (keyof SignUpFormValues)[] = [
+            "firstName",
+            "lastName",
+            "phone",
+            "email",
+            "password",
+          ];
+          let mapped = false;
+          for (const field of fields) {
+            const message = error.fieldErrors[field];
+            if (message) {
+              setError(field, { message });
+              mapped = true;
+            }
+          }
+          if (mapped) return;
+        }
+      }
       toast({
         title: "Could not create account",
         description: "Try again in a moment.",

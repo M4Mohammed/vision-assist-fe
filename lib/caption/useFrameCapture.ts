@@ -7,6 +7,8 @@ interface UseFrameCaptureOptions {
   intervalMs: number;
   enabled: boolean;
   onFrame: (frame: Blob) => void;
+  /** Cap the captured frame's width (px), downscaling to keep payloads small and inference fast. */
+  maxWidth?: number;
 }
 
 export function useFrameCapture({
@@ -14,6 +16,7 @@ export function useFrameCapture({
   intervalMs,
   enabled,
   onFrame,
+  maxWidth = 640,
 }: UseFrameCaptureOptions): void {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -42,8 +45,11 @@ export function useFrameCapture({
       if (!video || !canvas) return;
       if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
 
-      const width = video.videoWidth || 640;
-      const height = video.videoHeight || 480;
+      const sourceWidth = video.videoWidth || 640;
+      const sourceHeight = video.videoHeight || 480;
+      const scale = Math.min(1, maxWidth / sourceWidth);
+      const width = Math.round(sourceWidth * scale);
+      const height = Math.round(sourceHeight * scale);
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
 
@@ -66,5 +72,5 @@ export function useFrameCapture({
         timerRef.current = null;
       }
     };
-  }, [enabled, intervalMs, videoRef]);
+  }, [enabled, intervalMs, videoRef, maxWidth]);
 }

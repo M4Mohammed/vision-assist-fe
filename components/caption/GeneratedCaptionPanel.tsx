@@ -3,13 +3,14 @@
 import { Copy, Download, Volume2, VolumeX } from "lucide-react";
 import * as SwitchPrimitive from "@radix-ui/react-switch";
 import { Button } from "@/components/ui/Button";
-import { ConfidenceCard } from "./ConfidenceCard";
+import { ClassificationCard } from "./ClassificationCard";
 import { useToast } from "@/components/ui/Toast";
 import { cn } from "@/lib/utils/cn";
+import type { CaptionClassification } from "@/lib/caption/CaptionSocket";
 
 interface GeneratedCaptionPanelProps {
   caption: string | null;
-  confidence: number | null;
+  classification: CaptionClassification | null;
   speakSupported: boolean;
   autoSpeak: boolean;
   onToggleAutoSpeak: (next: boolean) => void;
@@ -20,7 +21,7 @@ interface GeneratedCaptionPanelProps {
 
 export function GeneratedCaptionPanel({
   caption,
-  confidence,
+  classification,
   speakSupported,
   autoSpeak,
   onToggleAutoSpeak,
@@ -155,7 +156,7 @@ export function GeneratedCaptionPanel({
         </div>
       </article>
 
-      <ConfidenceCard confidence={confidence} />
+      <ClassificationCard classification={classification} />
     </div>
   );
 }
