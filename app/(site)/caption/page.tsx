@@ -33,6 +33,11 @@ import { useToast } from "@/components/ui/Toast";
 
 type CaptionTab = "image" | "recorded" | "live";
 
+// How often we capture/send a live frame. Kept above ~1s so a spoken caption has time to finish
+// before the next one arrives (text-to-speech of a sentence takes a couple of seconds); the
+// non-interrupting auto-speak guard below is the backstop for captions that run longer than this.
+const LIVE_CAPTURE_INTERVAL_MS = 3000;
+
 interface CaptionState {
   text: string | null;
   classification: CaptionClassification | null;
@@ -89,9 +94,12 @@ function CaptionExperience() {
   const activeBusy = busyByTab[activeTab];
 
   const speakIfEnabled = useCallback(
-    (text: string) => {
+    (text: string, classification?: CaptionClassification | null) => {
       if (autoSpeak && tts.supported) {
-        tts.speak(text);
+        // Danger captions preempt whatever is being read; a safe caption waits its turn so it
+        // doesn't cut off the previous one mid-sentence.
+        const dangerous = classification?.label?.toUpperCase() === "DANGEROUS";
+        tts.speak(text, { interrupt: dangerous });
       }
     },
     [autoSpeak, tts],
@@ -112,7 +120,7 @@ function CaptionExperience() {
           text: event.caption.text,
           classification: event.caption.classification,
         });
-        speakIfEnabled(event.caption.text);
+        speakIfEnabled(event.caption.text, event.caption.classification);
       } else if (event.type === "error") {
         toast({
           title: "Live captioning error",
@@ -131,7 +139,7 @@ function CaptionExperience() {
 
   useFrameCapture({
     videoRef,
-    intervalMs: 1000,
+    intervalMs: LIVE_CAPTURE_INTERVAL_MS,
     enabled: liveBusy,
     onFrame: (frame) => {
       socketRef.current?.sendFrame(frame);
