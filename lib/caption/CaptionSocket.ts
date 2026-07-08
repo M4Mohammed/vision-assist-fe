@@ -7,10 +7,28 @@ export interface CaptionClassification {
   reason: string;
 }
 
+/**
+ * Per-caption latency segments, innermost to outermost. Each is measured on its own host's clock
+ * (never subtracting a browser timestamp from a server one): e2eMs here, relayMs on the backend,
+ * aiRequestMs/inferenceMs on the AI service. Differences between adjacent segments attribute time
+ * to network hops and overhead.
+ */
+export interface CaptionLatency {
+  /** Full loop on this browser's clock: frame sent -> caption received. */
+  e2eMs: number | null;
+  /** Backend wall time around its AI call (BE<->AI network + AI handling). */
+  relayMs: number | null;
+  /** AI service's total handler time (decode + preprocess + inference + classify). */
+  aiRequestMs: number | null;
+  /** GPU inference (model.generate()) only. */
+  inferenceMs: number | null;
+}
+
 export interface LiveCaption {
   text: string;
   classification: CaptionClassification | null;
   latencyMs: number | null;
+  latency: CaptionLatency | null;
 }
 
 export type CaptionEvent =
@@ -32,6 +50,13 @@ export type CaptionListener = (event: CaptionEvent) => void;
 export class CaptionSocket {
   private ws: WebSocket | null = null;
   private listeners = new Set<CaptionListener>();
+  /**
+   * performance.now() at send time for in-flight frames, keyed by the frame's ts (echoed back as
+   * frameTs). Frames the backend drops under back-pressure never resolve, so the map is pruned by
+   * size instead of waiting on replies.
+   */
+  private pending = new Map<number, number>();
+  private static readonly MAX_PENDING = 20;
 
   on(listener: CaptionListener): () => void {
     this.listeners.add(listener);
@@ -65,12 +90,31 @@ export class CaptionSocket {
       try {
         const msg = JSON.parse(event.data as string);
         if (msg.type === "caption") {
+          // End-to-end is measured entirely on this browser's clock via the frameTs echo.
+          let e2eMs: number | null = null;
+          if (typeof msg.frameTs === "number") {
+            const sentAt = this.pending.get(msg.frameTs);
+            if (sentAt !== undefined) {
+              e2eMs = performance.now() - sentAt;
+              this.pending.delete(msg.frameTs);
+            }
+          }
+          // Report it back so the server can histogram the one client-clock metric (Prometheus).
+          if (e2eMs !== null && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "stats", e2eMs: Math.round(e2eMs) }));
+          }
           this.emit({
             type: "caption",
             caption: {
               text: msg.caption,
               classification: msg.classification ?? null,
               latencyMs: msg.latencyMs ?? null,
+              latency: {
+                e2eMs,
+                relayMs: typeof msg.relayMs === "number" ? msg.relayMs : null,
+                aiRequestMs: typeof msg.aiRequestMs === "number" ? msg.aiRequestMs : null,
+                inferenceMs: typeof msg.latencyMs === "number" ? msg.latencyMs : null,
+              },
             },
           });
         } else if (msg.type === "error") {
@@ -85,6 +129,7 @@ export class CaptionSocket {
 
     ws.onclose = () => {
       this.ws = null;
+      this.pending.clear();
       this.emit({ type: "close" });
     };
   }
@@ -94,7 +139,13 @@ export class CaptionSocket {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     void blobToBase64(blob).then((data) => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: "frame", data, ts: Date.now() }));
+        const ts = Date.now();
+        this.pending.set(ts, performance.now());
+        if (this.pending.size > CaptionSocket.MAX_PENDING) {
+          const oldest = this.pending.keys().next().value;
+          if (oldest !== undefined) this.pending.delete(oldest);
+        }
+        this.ws.send(JSON.stringify({ type: "frame", data, ts }));
       }
     });
   }

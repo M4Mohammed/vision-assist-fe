@@ -24,7 +24,9 @@ import { useTextToSpeech } from "@/lib/caption/useTextToSpeech";
 import {
   CaptionSocket,
   type CaptionClassification,
+  type CaptionLatency,
 } from "@/lib/caption/CaptionSocket";
+import { LatencyHud } from "@/components/caption/LatencyHud";
 import {
   sampleImageCaption,
   sampleRecordedCaption,
@@ -59,6 +61,7 @@ function CaptionExperience() {
   const [recordedCaption, setRecordedCaption] =
     useState<CaptionState>(EMPTY);
   const [liveCaption, setLiveCaption] = useState<CaptionState>(EMPTY);
+  const [liveLatency, setLiveLatency] = useState<CaptionLatency | null>(null);
   const [imageBusy, setImageBusy] = useState(false);
   const [recordedBusy, setRecordedBusy] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
@@ -120,6 +123,7 @@ function CaptionExperience() {
           text: event.caption.text,
           classification: event.caption.classification,
         });
+        setLiveLatency(event.caption.latency);
         speakIfEnabled(event.caption.text, event.caption.classification);
       } else if (event.type === "error") {
         toast({
@@ -262,16 +266,19 @@ function CaptionExperience() {
             </SegmentedContent>
           </div>
 
-          <GeneratedCaptionPanel
-            caption={activeCaption.text}
-            classification={activeCaption.classification}
-            speakSupported={tts.supported}
-            autoSpeak={autoSpeak}
-            onToggleAutoSpeak={onToggleAutoSpeak}
-            onSpeak={onSpeakActive}
-            speaking={tts.speaking}
-            busy={activeBusy}
-          />
+          <div className="flex flex-col gap-4">
+            <GeneratedCaptionPanel
+              caption={activeCaption.text}
+              classification={activeCaption.classification}
+              speakSupported={tts.supported}
+              autoSpeak={autoSpeak}
+              onToggleAutoSpeak={onToggleAutoSpeak}
+              onSpeak={onSpeakActive}
+              speaking={tts.speaking}
+              busy={activeBusy}
+            />
+            {activeTab === "live" ? <LatencyHud sample={liveLatency} /> : null}
+          </div>
         </div>
       </Segmented>
 
